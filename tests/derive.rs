@@ -275,7 +275,7 @@ fn test_field_attributes() {
 
         height: u8,
 
-        #[arbitrary(with = |u: &mut Unstructured| u.int_in_range(0..=100))]
+        #[arbitrary(with = |a: &mut Unstructured| a.int_in_range(0..=100))]
         price: u8,
     }
 
