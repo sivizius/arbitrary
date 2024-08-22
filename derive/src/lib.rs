@@ -1,15 +1,12 @@
 extern crate proc_macro;
 
+mod attributes;
+
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::*;
 
-mod container_attributes;
-mod field_attributes;
-use container_attributes::ContainerAttributes;
-use field_attributes::{determine_field_constructor, FieldConstructor};
-
-static ARBITRARY_ATTRIBUTE_NAME: &str = "arbitrary";
+use self::attributes::{ContainerAttributes, FieldAttributes, ARBITRARY_ATTRIBUTE_NAME};
 static ARBITRARY_LIFETIME_NAME: &str = "'arbitrary";
 
 #[proc_macro_derive(Arbitrary, attributes(arbitrary))]
@@ -311,17 +308,10 @@ fn construct(
 
 fn construct_take_rest(fields: &Fields) -> Result<TokenStream> {
     construct(fields, |idx, field| {
-        determine_field_constructor(field).map(|field_constructor| match field_constructor {
-            FieldConstructor::Default => quote!(Default::default()),
-            FieldConstructor::Arbitrary => {
-                if idx + 1 == fields.len() {
-                    quote! { arbitrary::Arbitrary::arbitrary_take_rest(u)? }
-                } else {
-                    quote! { arbitrary::Arbitrary::arbitrary(&mut u)? }
-                }
-            }
-            FieldConstructor::With(function_or_closure) => quote!((#function_or_closure)(&mut u)?),
-            FieldConstructor::Value(value) => quote!(#value),
+        let take_rest = idx + 1 == fields.len();
+        FieldAttributes::try_from(field).map(|field_attrs| match take_rest {
+            true => field_attrs.generate_constructor_take_rest(),
+            false => field_attrs.generate_constructor(quote!(&mut u)),
         })
     })
 }
@@ -330,25 +320,8 @@ fn gen_size_hint_method(input: &DeriveInput) -> Result<TokenStream> {
     let size_hint_fields = |fields: &Fields| {
         fields
             .iter()
-            .map(|f| {
-                let ty = &f.ty;
-                determine_field_constructor(f).map(|field_constructor| {
-                    match field_constructor {
-                        FieldConstructor::Default | FieldConstructor::Value(_) => {
-                            quote!((0, Some(0)))
-                        }
-                        FieldConstructor::Arbitrary => {
-                            quote! { <#ty as arbitrary::Arbitrary>::size_hint(depth) }
-                        }
-
-                        // Note that in this case it's hard to determine what size_hint must be, so size_of::<T>() is
-                        // just an educated guess, although it's gonna be inaccurate for dynamically
-                        // allocated types (Vec, HashMap, etc.).
-                        FieldConstructor::With(_) => {
-                            quote! { (::core::mem::size_of::<#ty>(), None) }
-                        }
-                    }
-                })
+            .map(|field @ Field { ty, .. }| {
+                Ok(FieldAttributes::try_from(field)?.generate_size_hint(ty))
             })
             .collect::<Result<Vec<TokenStream>>>()
             .map(|hints| {
@@ -394,13 +367,7 @@ fn gen_size_hint_method(input: &DeriveInput) -> Result<TokenStream> {
 }
 
 fn gen_constructor_for_field(field: &Field) -> Result<TokenStream> {
-    let ctor = match determine_field_constructor(field)? {
-        FieldConstructor::Default => quote!(Default::default()),
-        FieldConstructor::Arbitrary => quote!(arbitrary::Arbitrary::arbitrary(u)?),
-        FieldConstructor::With(function_or_closure) => quote!((#function_or_closure)(u)?),
-        FieldConstructor::Value(value) => quote!(#value),
-    };
-    Ok(ctor)
+    Ok(FieldAttributes::try_from(field)?.generate_constructor(quote!(u)))
 }
 
 fn check_variant_attrs(variant: &Variant) -> Result<()> {

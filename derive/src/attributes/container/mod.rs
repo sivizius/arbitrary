@@ -1,4 +1,4 @@
-use crate::ARBITRARY_ATTRIBUTE_NAME;
+use super::ARBITRARY_ATTRIBUTE_NAME;
 use syn::{
     parse::Error, punctuated::Punctuated, DeriveInput, Expr, ExprLit, Lit, Meta, MetaNameValue,
     Token, TypeParam,
